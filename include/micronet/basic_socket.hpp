@@ -125,6 +125,13 @@ namespace unet
             tl::expected<T, error_code> recv_until(std::span<uint8_t> pattern, recv_opts = {}) noexcept;
 
             template <suitable_container_type T>
+            tl::expected<T, error_code> recv_until(char delim, recv_opts opts = {}) noexcept {
+                uint8_t d[1];
+                d[0] = static_cast<uint8_t>(delim);
+                return recv_until<T>(d, opts);
+            }
+
+            template <suitable_container_type T>
             tl::expected<T, error_code> recv_all(recv_opts = {}) noexcept;
 
             // for integration
@@ -351,7 +358,7 @@ namespace unet
         socklen_t addr_size = sizeof(their_addr);
 
         detail::os::platform_event_type event;
-        if (wait_listen(&event, 1, timeout) != 0)
+        if (wait_listen(&event, 1, timeout) == -1)
             return tl::unexpected(error_code::no_socket_to_accept);
 
         os_socket_type new_sockfd = ::accept(native_socket_from_event(event),
@@ -487,7 +494,7 @@ namespace unet
         bool multiple_chunks = false;
 
         while(true) {
-            ssize_t bytes = ::recv(socket_fd, &recv_last, 1, multiple_chunks ? MSG_DONTWAIT | opts : opts);
+            ssize_t bytes = ::recv(socket_fd, os_ptr_cast(&recv_last), 1, multiple_chunks ? MSG_DONTWAIT | opts : opts);
 
             if (bytes == 0) {
                 close();
@@ -495,7 +502,7 @@ namespace unet
             } else if (bytes < 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK) {
                     if (opts.allow_partial) {
-                        std::swap(orig_target, std::move(target));
+                        std::swap(orig_target, target);
                         return {};
                     }
                     return tl::unexpected(error_code::no_data_to_read);
@@ -513,7 +520,7 @@ namespace unet
             multiple_chunks = true;
         }
 
-        std::swap(orig_target, std::move(target));
+        std::swap(orig_target, target);
         return {};
     }
 
@@ -523,8 +530,8 @@ namespace unet
     {
         T rval{};
         auto result = recv_append_until(rval, pattern, flags);
-        if (result.has_error())
-            return result.error();
+        if (not result.has_value())
+            return tl::unexpected{result.error()};
 
         return rval;
     }
