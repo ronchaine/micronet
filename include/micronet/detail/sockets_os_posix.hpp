@@ -16,22 +16,28 @@
 namespace unet::detail::os {
     using platform_event_type = epoll_event;
 }
+#elif defined(UNET_URING)
+# error Not implemented
 #elif defined(UNET_KQUEUE)
+# error Not implemented
 # include <sys/event.h>
 namespace unet::detail::os {
     using platform_event_type = kevent;
 }
 #else
-# error No multiplexer backend chosen, define UNET_EPOLL or UNET_KQUEUE
+# error No multiplexer backend chosen, define UNET_EPOLL, UNET_URING or UNET_KQUEUE
 #endif
+
+namespace unet
+{
+    using native_socket_type = int;
+}
 
 namespace unet::detail::os
 {
-    using socket_type = int;
-
-    constexpr static socket_type uninitialised_socket    = 0;
-    constexpr static socket_type disabled_socket         = -2;
-    constexpr static socket_type socket_error            = -1;
+    constexpr static native_socket_type uninitialised_socket    = 0;
+    constexpr static native_socket_type disabled_socket         = -2;
+    constexpr static native_socket_type socket_error            = -1;
 
     class socket
     {
@@ -40,22 +46,22 @@ namespace unet::detail::os
             socket(socket&&) = default;
             socket(const socket&) = delete;
 
-            tl::expected<void, error_code> listen_on_os_socket(os::socket_type& sock, int backlog_size, int socktype) noexcept;
+            tl::expected<void, error_code> listen_on_os_socket(native_socket_type& sock, int backlog_size, int socktype) noexcept;
             void stop_listening() noexcept { ::close(listen_fd); listen_fd = uninitialised_socket; }
 
             int wait_listen(platform_event_type* output, uint32_t max_events, std::chrono::milliseconds timeout) noexcept;
 
-            socket_type os_socket_from_event(platform_event_type& event) const noexcept {
+            native_socket_type os_socket_from_event(platform_event_type& event) const noexcept {
                 #if defined(UNET_EPOLL)
                 return event.data.fd;
                 #endif
             }
 
         private:
-            socket_type listen_fd = uninitialised_socket;
+            native_socket_type listen_fd = uninitialised_socket;
     };
 
-    tl::expected<void, error_code> socket::listen_on_os_socket(os::socket_type& sock, int backlog_size, int socktype) noexcept
+    tl::expected<void, error_code> socket::listen_on_os_socket(native_socket_type& sock, int backlog_size, int socktype) noexcept
     {
         (void)socktype;
 
