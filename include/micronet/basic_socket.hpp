@@ -58,7 +58,6 @@ namespace unet
     struct recv_opts {
         bool disable_wait : 1 = false;
         bool allow_partial : 1 = false;
-        bool append : 1 = false;
 
         // to ::recv flags, probably POSIX-only, TODO: figure out how to handle this in windows
         operator int() {
@@ -118,6 +117,9 @@ namespace unet
             // receiving data
             template <typename T>
             tl::expected<T, error_code> recv(recv_opts = {}) noexcept;
+
+            template <suitable_container_type T>
+            tl::expected<void, error_code> recv_append_until(T& target, std::span<uint8_t> pattern, recv_opts = {}) noexcept;
 
             template <suitable_container_type T>
             tl::expected<T, error_code> recv_until(std::span<uint8_t> pattern, recv_opts = {}) noexcept;
@@ -470,50 +472,59 @@ namespace unet
     // FIXME: this needs to use some sort of buffering, ::recving a byte at a time is horrible
     template <suitable_socket_type SockType>
     template <suitable_container_type T>
-    tl::expected<T, error_code> basic_socket<SockType>::recv_until(std::span<uint8_t> pattern, recv_opts flags) noexcept
+    tl::expected<void, error_code> basic_socket<SockType>::recv_append_until(T& orig_target, std::span<uint8_t> pattern, recv_opts opts) noexcept
     {
+        auto target = orig_target;
+
         if (not is_active())
             return tl::unexpected(error_code::no_active_socket);
 
-        T rval{};
-
-        const int socket_fd = socket_ipv4 == disabled ? socket_ipv6 : socket_ipv4;
+        native_socket_type socket_fd = get_active_native_socket();
 
         size_t match_size = 0;
-
-        uint8_t recv;
+        uint8_t recv_last;
 
         bool multiple_chunks = false;
+
         while(true) {
-            ssize_t bytes = ::recv(socket_fd, &recv, 1, multiple_chunks ? MSG_DONTWAIT : flags);
+            ssize_t bytes = ::recv(socket_fd, &recv_last, 1, multiple_chunks ? MSG_DONTWAIT | opts : opts);
 
             if (bytes == 0) {
                 close();
                 return tl::unexpected(error_code::connection_reset_by_peer);
             } else if (bytes < 0) {
-                if (errno == EAGAIN || errno == EWOULDBLOCK)
-                {
-                    if (flags.allow_partial)
-                        return rval;
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    if (opts.allow_partial) {
+                        std::swap(orig_target, std::move(target));
+                        return {};
+                    }
                     return tl::unexpected(error_code::no_data_to_read);
                 }
-
                 return tl::unexpected(error_code::recv_failed);
             }
 
-            rval.push_back(static_cast<typename T::value_type>(recv));
+            target.push_back(static_cast<typename T::value_type>(recv_last));
 
-            if (bytes < recv_buffer_size)
-                break;
-
-            if (recv == pattern[match_size]) {
+            if (recv_last == pattern[match_size]) {
                 match_size++;
                 if (match_size == pattern.size())
                     break;
             }
-
             multiple_chunks = true;
         }
+
+        std::swap(orig_target, std::move(target));
+        return {};
+    }
+
+    template <suitable_socket_type SockType>
+    template <suitable_container_type T>
+    tl::expected<T, error_code> basic_socket<SockType>::recv_until(std::span<uint8_t> pattern, recv_opts flags) noexcept
+    {
+        T rval{};
+        auto result = recv_append_until(rval, pattern, flags);
+        if (result.has_error())
+            return result.error();
 
         return rval;
     }
