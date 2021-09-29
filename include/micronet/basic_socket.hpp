@@ -15,8 +15,6 @@
 #include <cstring>
 #include <span>
 
-#include <iostream>
-
 namespace unet
 {
     using namespace std::chrono_literals;
@@ -113,6 +111,7 @@ namespace unet
             template <typename T>
             tl::expected<size_t, error_code> send(const T& data) const noexcept;
 
+            tl::expected<size_t, error_code> send(const std::string& data) const noexcept;
 
             // receiving data
             template <typename T>
@@ -161,12 +160,9 @@ namespace unet
             this->close_hook();
         }
 
-        if (socket_ipv6 > 0) {
-            std::cout << "closing " << socket_ipv6 << "\n";
+        if (socket_ipv6 > 0)
             ::close(socket_ipv6);
-        }
         if (socket_ipv4 > 0)
-            std::cout << "closing " << socket_ipv4 << "\n";
             ::close(socket_ipv4);
     }
 
@@ -372,6 +368,12 @@ namespace unet
         return send_raw(data.data(), data.size() * sizeof(T));
     }
 
+    template <suitable_socket_type SockType>
+    tl::expected<size_t, error_code> basic_socket<SockType>::send(const std::string& data) const noexcept
+    {
+        return send_raw(data.data(), data.size());
+    }
+
     template <suitable_socket_type SockType> template <typename T>
     tl::expected<size_t, error_code> basic_socket<SockType>::send(const T& data) const noexcept
     {
@@ -442,7 +444,6 @@ namespace unet
                 return tl::unexpected(error_code::connection_reset_by_peer);
             }
             else if (bytes < 0) {
-                std::cout << strerror(errno) << "\n";
                 return tl::unexpected(error_code::recv_failed);
             }
 
