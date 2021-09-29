@@ -43,7 +43,7 @@ namespace unet
     };
 
     template <typename T>
-    concept suitable_container_type = requires(T t) {
+    concept suitable_container_type = (sizeof(typename T::value_type) == 1) && requires(T t) {
         t.size;
         t.resize;
         t.operator[];
@@ -411,6 +411,7 @@ namespace unet
         return sent;
     }
 
+    // TODO/FIXME: write straight into rval if sizeof(RecvType) < recv_buffer_size
     template <suitable_socket_type SockType>
     template <typename RecvType>
     tl::expected<RecvType, error_code> basic_socket<SockType>::recv(recv_opts opts) noexcept
@@ -420,8 +421,6 @@ namespace unet
 
         if (not is_active())
             return tl::unexpected(error_code::no_active_socket);
-
-        constexpr static int zero_flags = 0;
 
         RecvType rval{};
 
@@ -436,7 +435,7 @@ namespace unet
             ssize_t bytes = ::recv(raw_sockfd,
                                    chunk.data(),
                                    std::min(bytes_remaining, recv_buffer_size),
-                                   zero_flags);
+                                   opts);
 
             if (bytes == 0) {
                 close();
@@ -472,7 +471,6 @@ namespace unet
         const int socket_fd = socket_ipv4 == disabled ? socket_ipv6 : socket_ipv4;
         std::array<std::byte, recv_buffer_size> chunk;
 
-        size_t total_recv = 0;
         size_t match_size = 0;
 
         uint8_t recv;
@@ -487,7 +485,7 @@ namespace unet
             } else if (bytes < 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK)
                 {
-                    if (flags.allow_partial || multiple_chunks)
+                    if (flags.allow_partial)
                         return rval;
                     return tl::unexpected(error_code::no_data_to_read);
                 }
@@ -495,12 +493,16 @@ namespace unet
                 return tl::unexpected(error_code::recv_failed);
             }
 
-            rval.resize(total_recv + bytes);
-            std::memmove(rval.data() + total_recv, chunk.data(), bytes);
-            total_recv += bytes;
+            rval.push_back(static_cast<typename T::value_type>(recv));
 
             if (bytes < recv_buffer_size)
                 break;
+
+            if (recv == pattern[match_size]) {
+                match_size++;
+                if (match_size == pattern.size())
+                    break;
+            }
 
             multiple_chunks = true;
         }
