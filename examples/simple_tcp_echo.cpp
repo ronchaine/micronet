@@ -3,7 +3,7 @@
 
 int main()
 {
-    // this is a simple structure around the native socket
+    // this is our wrapper, could also use unet::basic_socket<socktype_tcp>
     unet::tcp_socket sock;
 
     // listen on port 8999, this will listen for both IPv4 and

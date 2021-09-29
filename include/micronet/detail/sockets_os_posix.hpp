@@ -30,14 +30,15 @@ namespace unet::detail::os {
 
 namespace unet
 {
+    using os_socket_type = int;
     using native_socket_type = int;
 }
 
 namespace unet::detail::os
 {
-    constexpr static native_socket_type uninitialised_socket    = 0;
-    constexpr static native_socket_type disabled_socket         = -2;
-    constexpr static native_socket_type socket_error            = -1;
+    constexpr static os_socket_type uninitialised_socket    = 0;
+    constexpr static os_socket_type disabled_socket         = -2;
+    constexpr static os_socket_type socket_error            = -1;
 
     class socket
     {
@@ -46,22 +47,26 @@ namespace unet::detail::os
             socket(socket&&) = default;
             socket(const socket&) = delete;
 
-            tl::expected<void, error_code> listen_on_os_socket(native_socket_type& sock, int backlog_size, int socktype) noexcept;
+            tl::expected<void, error_code> listen_on_os_socket(os_socket_type& sock, int backlog_size, int socktype) noexcept;
             void stop_listening() noexcept { ::close(listen_fd); listen_fd = uninitialised_socket; }
 
             int wait_listen(platform_event_type* output, uint32_t max_events, std::chrono::milliseconds timeout) noexcept;
 
-            native_socket_type os_socket_from_event(platform_event_type& event) const noexcept {
+            int native_socket_from_event(platform_event_type& event) const noexcept {
                 #if defined(UNET_EPOLL)
                 return event.data.fd;
                 #endif
             }
 
+            inline void* os_ptr_cast(void* ptr) {
+                return ptr;
+            }
+
         private:
-            native_socket_type listen_fd = uninitialised_socket;
+            os_socket_type listen_fd = uninitialised_socket;
     };
 
-    tl::expected<void, error_code> socket::listen_on_os_socket(native_socket_type& sock, int backlog_size, int socktype) noexcept
+    tl::expected<void, error_code> socket::listen_on_os_socket(os_socket_type& sock, int backlog_size, int socktype) noexcept
     {
         (void)socktype;
 

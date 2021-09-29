@@ -3,8 +3,7 @@
 Simple C++20 wrapper around BSD sockets with some QoL functionality.
 Focuses on simple use first, uses `tl::expected` for error handling.
 
-Works currently only on Linux.
-
+On Windows uses winsock2.
 
 There's ton of performance improvements to be made in the source
 code, it currently makes stupid copies, doesn't buffer nearly

@@ -19,6 +19,7 @@ namespace unet
         multiplexing_error,
         cannot_listen,
         no_active_socket,
+        no_socket_to_accept,
         failed_to_accept,
         failed_to_send,
         recv_failed,
@@ -41,6 +42,8 @@ namespace unet
                 return "cannot_listen";
             case error_code::no_active_socket:
                 return "no active socket";
+            case error_code::no_socket_to_accept:
+                return "no socket to accept()";
             case error_code::failed_to_accept:
                 return "failed to accept()";
             case error_code::failed_to_send:

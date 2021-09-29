@@ -51,8 +51,8 @@ namespace unet
 
     struct ip_socket_pair
     {
-        native_socket_type ipv4;
-        native_socket_type ipv6;
+        os_socket_type ipv4;
+        os_socket_type ipv6;
     };
 
     struct recv_opts {
@@ -70,8 +70,8 @@ namespace unet
     class basic_socket : public SocketType, detail::os::socket
     {
         public:
-            constexpr static native_socket_type uninitialised  = detail::os::uninitialised_socket;
-            constexpr static native_socket_type disabled       = detail::os::disabled_socket;
+            constexpr static os_socket_type uninitialised  = detail::os::uninitialised_socket;
+            constexpr static os_socket_type disabled       = detail::os::disabled_socket;
 
             constexpr static bool is_secure = SocketType::secure;
 
@@ -80,7 +80,7 @@ namespace unet
             size_t mtu_size = 1200;
 
             basic_socket() noexcept;
-            basic_socket(native_socket_type in_socket_fd, int protocol) noexcept;
+            basic_socket(os_socket_type in_socket_fd, int protocol) noexcept;
             basic_socket(basic_socket&&) noexcept(std::is_nothrow_move_assignable<basic_socket>::value);
             basic_socket& operator=(basic_socket&&) noexcept;
 
@@ -136,12 +136,16 @@ namespace unet
         private:
             tl::expected<size_t, error_code> send_raw(const char* dataptr, size_t size) const noexcept;
 
-            native_socket_type get_os_socket(const std::string& host, uint16_t port, int family) noexcept;
+            os_socket_type get_os_socket(const std::string& host, uint16_t port, int family) noexcept;
+
+            native_socket_type get_active_native_socket() const noexcept {
+                return static_cast<native_socket_type>(socket_ipv4 == disabled ? socket_ipv6 : socket_ipv4);
+            }
 
             // TODO/FIXME: this probably needs to be changed later on to be dependant on SocketType,
             // e.g. we don't need IP sockets for UNIX domain sockets.
-            native_socket_type socket_ipv6 = uninitialised;
-            native_socket_type socket_ipv4 = uninitialised;
+            os_socket_type socket_ipv6 = uninitialised;
+            os_socket_type socket_ipv4 = uninitialised;
     };
 }
 
@@ -200,7 +204,7 @@ namespace unet
     }
 
     template <suitable_socket_type SockType>
-    native_socket_type basic_socket<SockType>::get_os_socket(const std::string& host, uint16_t port, int family) noexcept
+    os_socket_type basic_socket<SockType>::get_os_socket(const std::string& host, uint16_t port, int family) noexcept
     {
         addrinfo    hints{};
         addrinfo*   server_info = nullptr;
@@ -266,7 +270,7 @@ namespace unet
     }
 
     template <suitable_socket_type SockType>
-    basic_socket<SockType>::basic_socket(native_socket_type in_socket_fd, int protocol) noexcept
+    basic_socket<SockType>::basic_socket(os_socket_type in_socket_fd, int protocol) noexcept
     {
         socket_ipv4 = protocol == AF_INET ? in_socket_fd : disabled;
         socket_ipv6 = protocol == AF_INET6 ? in_socket_fd : disabled;
@@ -345,13 +349,14 @@ namespace unet
         socklen_t addr_size = sizeof(their_addr);
 
         detail::os::platform_event_type event;
-        wait_listen(&event, 1, timeout);
+        if (wait_listen(&event, 1, timeout) != 0)
+            return tl::unexpected(error_code::no_socket_to_accept);
 
-        native_socket_type new_socket = ::accept(os_socket_from_event(event),
-                                                      reinterpret_cast<sockaddr*>(&their_addr),
-                                                      &addr_size);
+        os_socket_type new_sockfd = ::accept(native_socket_from_event(event),
+                                                 reinterpret_cast<sockaddr*>(&their_addr),
+                                                 &addr_size);
 
-        if (new_socket == detail::os::socket_error)
+        if (new_sockfd == detail::os::socket_error)
             return tl::unexpected(error_code::failed_to_accept);
 
         char s[INET6_ADDRSTRLEN];
@@ -359,9 +364,9 @@ namespace unet
                   detail::get_in_addr(reinterpret_cast<sockaddr*>(&their_addr)),
                   s, sizeof(s));
 
-        int af_type = os_socket_from_event(event) == socket_ipv4 ? AF_INET : AF_INET6;
+        int af_type = native_socket_from_event(event) == socket_ipv4 ? AF_INET : AF_INET6;
 
-        return basic_socket(new_socket, af_type);
+        return basic_socket(new_sockfd, af_type);
     }
 
     template <suitable_socket_type SockType> template <typename T>
@@ -397,8 +402,8 @@ namespace unet
         if (not is_active())
             return tl::unexpected(error_code::no_active_socket);
         
-        const int socket_fd = socket_ipv4 == disabled ? socket_ipv6 : socket_ipv4;
-        
+        const native_socket_type socket_fd = get_active_native_socket();
+
         size_t sent = 0;
         size_t left = total_size;
         int n = 0;
@@ -428,7 +433,7 @@ namespace unet
 
         RecvType rval{};
 
-        const native_socket_type raw_sockfd = socket_ipv4 == disabled ? socket_ipv6 : socket_ipv4;
+        const native_socket_type raw_sockfd = get_active_native_socket();
         std::array<std::byte, recv_buffer_size> chunk;
 
         ssize_t bytes_remaining = sizeof(RecvType);
@@ -436,8 +441,9 @@ namespace unet
 
         while(true) {
             chunk.fill(std::byte(0));
+
             ssize_t bytes = ::recv(raw_sockfd,
-                                   chunk.data(),
+                                   os_ptr_cast(chunk.data()),
                                    std::min(bytes_remaining, recv_buffer_size),
                                    opts);
 
@@ -472,7 +478,6 @@ namespace unet
         T rval{};
 
         const int socket_fd = socket_ipv4 == disabled ? socket_ipv6 : socket_ipv4;
-        std::array<std::byte, recv_buffer_size> chunk;
 
         size_t match_size = 0;
 
@@ -527,7 +532,8 @@ namespace unet
 
         T rval{};
 
-        const int socket_fd = socket_ipv4 == disabled ? socket_ipv6 : socket_ipv4;
+        native_socket_type socket_fd = get_active_native_socket();
+
         std::array<std::byte, recv_buffer_size> chunk;
 
         size_t total_recv = 0;
@@ -536,7 +542,8 @@ namespace unet
         while(true)
         {
             chunk.fill(std::byte(0));
-            ssize_t bytes = ::recv(socket_fd, chunk.data(), recv_buffer_size, multiple_chunks ? MSG_DONTWAIT : no_flags);
+            ssize_t bytes = ::recv(socket_fd, os_ptr_cast(chunk.data()), recv_buffer_size, multiple_chunks ? MSG_DONTWAIT : no_flags);
+
             if (bytes == 0) {
                 close();
                 return tl::unexpected(error_code::connection_reset_by_peer);
@@ -558,6 +565,7 @@ namespace unet
     }
 }
 
+#ifndef _WIN32
 namespace std
 {
     template <unet::suitable_socket_type SockType> struct hash<unet::basic_socket<SockType>>
@@ -565,13 +573,14 @@ namespace std
         size_t operator()(const unet::basic_socket<SockType>& sock) const
         {
             // this is assumed, so check it
-            static_assert(sizeof(size_t) >= sizeof(unet::native_socket_type) * 2, 
+            static_assert(sizeof(size_t) >= sizeof(unet::os_socket_type) * 2, 
                     "FIXME/BUG: Implementation assumes sizeof(size_t) is at least twice sizeof(os::socket_type)\n");
 
             unet::ip_socket_pair socks = sock.native_sockets();
-            return (size_t(socks.ipv6) << (sizeof(unet::native_socket_type) * 8)) | socks.ipv4;
+            return (size_t(socks.ipv6) << (sizeof(unet::os_socket_type) * 8)) | socks.ipv4;
         }
     };
 }
+#endif
 
 #endif
