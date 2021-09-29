@@ -3,6 +3,14 @@
 
 #include <tl/expected.hpp>
 
+#if defined(__linux__) || defined(__linux)
+# include <sys/socket.h>
+#elif defined(_WIN32)
+# include <winsock2.h>
+# include <ws2def.h>
+# include <ws2tcpip.h>
+#endif
+
 namespace unet
 {
     enum class error_code {

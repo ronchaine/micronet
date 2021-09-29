@@ -7,6 +7,8 @@
 #if defined(__linux__) || defined(__linux)
 # include <sys/socket.h>
 # include "detail/sockets_os_posix.hpp"
+#elif defined(_WIN32)
+# include "detail/sockets_os_winsock2.hpp"
 #endif
 
 #include "detail/utility.hpp"
@@ -42,9 +44,9 @@ namespace unet
 
     template <typename T>
     concept suitable_container_type = (sizeof(typename T::value_type) == 1) && requires(T t) {
-        t.size;
-        t.resize;
-        t.operator[];
+        { t.size() };
+        { t.resize(0) };
+        { t.operator[](0) };
     };
 
     struct ip_socket_pair
@@ -204,7 +206,7 @@ namespace unet
         addrinfo*   server_info = nullptr;
         addrinfo*   info = nullptr;
 
-        const int yes = 1;
+        const char yes = 1;
 
         char portstr[6]; sprintf(portstr, "%d", port);
 
